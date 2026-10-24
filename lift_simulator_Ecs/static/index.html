@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>5-Floor Lift Controller & Simulator | Arduino UNO + AI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+  <!-- TensorFlow.js & COCO-SSD Object Detection for Live Passenger Detection -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="top-bar">
+      <div class="brand">
+        <div class="brand-icon">
+          <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none">
+            <rect x="4" y="2" width="16" height="20" rx="2" />
+            <line x1="12" y1="2" x2="12" y2="22" />
+            <line x1="8" y1="7" x2="8" y2="7.01" />
+            <line x1="16" y1="7" x2="16" y2="7.01" />
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h1>5-Floor Lift Controller & Simulator</h1>
+          <span class="sub-badge">Floor 3 Main Station • 4-Motor Dual-L298N Architecture</span>
+        </div>
+      </div>
+
+      <div class="system-status-bar">
+        <div class="status-chip" id="wsStatusChip">
+          <span class="pulse-dot"></span>
+          <span id="wsStatusText">Connecting WS...</span>
+        </div>
+        <div class="status-chip target-webhook-chip" title="Outbound Webhook URL">
+          <span class="chip-label">Webhook:</span>
+          <span class="chip-value" id="webhookUrlDisplay">http://localhost:8000/lift/arrived</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Grid -->
+    <main class="main-grid">
+      <!-- Left Column: Lift Shaft Visualization -->
+      <section class="shaft-section glass-card">
+        <div class="section-header">
+          <div class="header-left">
+            <h2>Building Shaft (5 Floors)</h2>
+            <span class="caption">Real-time Kinematics & Door Position</span>
+          </div>
+          <div class="shaft-current-indicator">
+            <span class="f-label">CAR AT:</span>
+            <span class="f-val" id="shaftCarFloorVal">1</span>
+          </div>
+        </div>
+
+        <div class="shaft-stage">
+          <!-- Guide rails and cable -->
+          <div class="shaft-rail left-rail"></div>
+          <div class="shaft-rail right-rail"></div>
+
+          <!-- Top Machine Room Hoist Drum & Pulley Assembly -->
+          <div class="shaft-hoist-machine" id="shaftHoistMachine">
+            <div class="hoist-drum-bracket">
+              <div class="hoist-drum-wheel" id="hoistDrumWheel"></div>
+            </div>
+          </div>
+
+          <!-- 5 Floors background grid -->
+          <div class="floors-container" id="floorsContainer">
+            <!-- Floor items generated dynamically in JS (5 down to 1) -->
+          </div>
+
+          <!-- The Lift Car -->
+          <div class="lift-car" id="liftCar">
+            <!-- Continuous Heavy Duty Steel Hoist Cable (Anchored to Car Roof) -->
+            <div class="car-cable" id="carCable"></div>
+
+            <!-- Cable Hitch & Pulley Mount on Roof -->
+            <div class="car-cable-hitch">
+              <div class="hitch-pulley"></div>
+            </div>
+
+            <div class="car-frame">
+              <div class="car-top-header">
+                <span class="car-badge" id="carDisplayFloor">1</span>
+                <span class="car-direction-arrow" id="carDirectionArrow">■</span>
+              </div>
+              
+              <!-- Cabin Interior & Sliding Bi-parting Doors -->
+              <div class="cabin-interior">
+                <div class="interior-light"></div>
+                <div class="passenger-silhouette"></div>
+                
+                <!-- Bi-parting Sliding Doors -->
+                <div class="door-assembly">
+                  <div class="door-panel door-left" id="doorLeft">
+                    <div class="door-window"></div>
+                    <div class="door-handle"></div>
+                  </div>
+                  <div class="door-panel door-right" id="doorRight">
+                    <div class="door-window"></div>
+                    <div class="door-handle"></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="car-state-mini" id="carStateMini">NORMAL</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Door Open Progress Bar -->
+        <div class="door-meter-wrapper">
+          <div class="door-meter-label">
+            <span>Door Aperture</span>
+            <span id="doorApertureVal">0% (Closed)</span>
+          </div>
+          <div class="door-meter-track">
+            <div class="door-meter-bar" id="doorMeterBar"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Column: Control Deck & Telemetry -->
+      <section class="control-telemetry-col">
+        <!-- Live State & Telemetry Card -->
+        <div class="telemetry-card glass-card">
+          <div class="section-header">
+            <h2>Lift State & Telemetry</h2>
+            <span class="state-pill" id="mainStateBadge">NORMAL</span>
+          </div>
+
+          <div class="telemetry-grid">
+            <div class="telemetry-item">
+              <span class="item-title">Current Floor</span>
+              <div class="item-value-wrap">
+                <span class="item-value highlight-val" id="telCurrentFloor">1.00</span>
+                <span class="item-unit">FL</span>
+              </div>
+            </div>
+
+            <div class="telemetry-item">
+              <span class="item-title">Target Floor</span>
+              <div class="item-value-wrap">
+                <span class="item-value" id="telTargetFloor">--</span>
+                <span class="item-unit">FL</span>
+              </div>
+            </div>
+
+            <div class="telemetry-item">
+              <span class="item-title">Active Mode</span>
+              <div class="item-value-wrap">
+                <span class="item-value mode-val" id="telMode">Idle Wandering</span>
+              </div>
+            </div>
+
+            <div class="telemetry-item full-width">
+              <span class="item-title">Active Request ID</span>
+              <div class="request-id-display">
+                <code id="telRequestId">None (Simulation Idle)</code>
+                <button class="icon-btn-copy" id="btnCopyReqId" title="Copy Request ID" style="display:none;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Floor 3 Main Station: Call Buttons, Indicator LEDs & Motors Card -->
+        <div class="hardware-card glass-card">
+          <div class="section-header">
+            <div class="header-left">
+              <h2>Floor 3: Station Buttons, Indicator Lights & 4 Motors</h2>
+              <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px; flex-wrap: wrap;">
+                <span class="badge-sub" id="arduinoPortBadge">Arduino Uno • Scanning USB COM Ports...</span>
+                <button type="button" id="btnScanArduino" class="badge-sub" style="cursor: pointer; background: rgba(59, 130, 246, 0.2); border: 1px solid rgba(59, 130, 246, 0.4); color: #93c5fd; padding: 2px 8px; border-radius: 4px;" title="Scan for USB Ports">🔄 Scan Ports</button>
+              </div>
+            </div>
+            <span class="state-pill hw-status-pill" id="hwAiStatusBadge">READY</span>
+          </div>
+
+          <div class="hardware-grid">
+            <!-- Floor 3 Request Buttons & Single Operation LED (Uno Pin 12, Pin 13 & Pin 7) -->
+            <div class="hw-module switches-module">
+              <div class="module-title">
+                <span>🎛️ 1. Floor 3 Station Buttons & Indicator LED</span>
+                <span class="sensor-badge" id="activeSwitchBadge">IDLE</span>
+              </div>
+              <div class="switch-toggle-row">
+                <button class="switch-btn" id="btnSwitchDown" data-dest="1">
+                  <div class="switch-indicator-led led-down" id="ledDownInd"></div>
+                  <div class="switch-info">
+                    <strong>⬇️ DOWN: Floor 3 ➔ Ground (Floor 1)</strong>
+                    <small>Pin 12 Button • Pin 7 LED (ON during operation, OFF on delivery)</small>
+                  </div>
+                </button>
+                <button class="switch-btn" id="btnSwitchUp" data-dest="5">
+                  <div class="switch-indicator-led led-up" id="ledUpInd"></div>
+                  <div class="switch-info">
+                    <strong>⬆️ UP: Floor 3 ➔ Top Floor 5</strong>
+                    <small>Pin 13 Button • Pin 7 LED (ON during operation, OFF on delivery)</small>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            <!-- AI Vision Camera Live Module (Laptop Webcam Sole Source) -->
+            <div class="hw-module camera-module">
+              <div class="module-title">
+                <span>📹 2. Floor 3 Live AI Vision Camera (Laptop Webcam)</span>
+                <span class="sensor-badge" id="passengerPresenceLabel">Waiting for Button Press</span>
+              </div>
+              <p style="font-size: 12px; color: var(--text-muted); margin: 6px 0 10px;">
+                Pressing DOWN or UP starts the lift moving immediately while live vision AI scans for a human at Floor 3.
+              </p>
+
+              <!-- Live Webcam Viewport on Dashboard -->
+              <div class="dash-camera-container" style="position: relative; width: 100%; border-radius: 12px; overflow: hidden; background: #0b0f19; margin-bottom: 10px; aspect-ratio: 16/9; max-height: 200px; display: flex; align-items: center; justify-content: center; border: 1px solid rgba(255,255,255,0.12);">
+                <video id="dashWebcam" playsinline autoplay muted style="width: 100%; height: 100%; object-fit: cover; display: block;"></video>
+                <canvas id="dashOverlay" style="position: absolute; top:0; left:0; width: 100%; height: 100%; pointer-events: none;"></canvas>
+                <div id="camPlaceholder" style="position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: var(--text-muted); font-size: 13px; padding: 16px; background: rgba(11, 15, 25, 0.85); backdrop-filter: blur(4px);">
+                  <span style="font-size: 30px; display: block; margin-bottom: 4px;">📷</span>
+                  <strong style="color: #e2e8f0;">Laptop Webcam Preview</strong>
+                  <div style="font-size: 11px; margin-top: 4px; color: #94a3b8;">Click below to grant camera access or use manual button</div>
+                </div>
+                <div id="dashCamHud" style="position: absolute; top: 8px; left: 8px; background: rgba(0,0,0,0.75); backdrop-filter: blur(6px); color: #34d399; font-size: 11px; padding: 3px 8px; border-radius: 6px; font-family: var(--font-mono); display: block;">Laptop Webcam Live • Ready</div>
+                <div id="dashGlow" style="position: absolute; inset: 0; pointer-events: none; border: 3px solid transparent; border-radius: 12px; transition: all 0.2s ease;"></div>
+              </div>
+
+              <!-- Camera Controls & Hold Gauge -->
+              <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+                <button type="button" class="btn btn-secondary-sm" id="btnToggleDashCam" style="flex: 1; padding: 6px 10px; font-size: 12px; display: flex; align-items: center; justify-content: center; gap: 6px; background: rgba(255,255,255,0.06);">
+                  <span>📹</span> <span id="dashCamBtnText">Disable Web Camera</span>
+                </button>
+              </div>
+
+              <div class="gauge-track" style="height: 8px; background: rgba(255,255,255,0.08); border-radius: 4px; overflow: hidden; margin-bottom: 4px;">
+                <div id="dashGaugeFill" style="height: 100%; width: 0%; background: linear-gradient(90deg, #3b82f6, #10b981); transition: width 0.1s linear;"></div>
+              </div>
+              <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-bottom: 10px;">
+                <span id="dashDetectionLabel">Standby (Press Down or Up to start)</span>
+                <span id="dashGaugeTimer">Standby</span>
+              </div>
+
+              <!-- Quick Verification / Override Buttons -->
+              <div class="cap-action-row" style="display: flex; gap: 10px;">
+                <button class="btn btn-primary" id="btnPassengerVerifyYes" style="flex: 1; background: #059669; border-color: #10b981;">
+                  <span class="btn-icon">👤</span>
+                  <div class="btn-content">
+                    <strong>YES: Human Present</strong>
+                    <small>Confirm human passenger</small>
+                  </div>
+                </button>
+                <button class="btn btn-secondary-sm" id="btnPassengerVerifyNo" style="flex: 1; background: #dc2626; color: #fff; border-color: #ef4444;">
+                  <span class="btn-icon">❌</span>
+                  <div class="btn-content">
+                    <strong>NO: No Human (Cancel)</strong>
+                    <small>Stop lift & turn OFF LED</small>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            <!-- 4-Motor Setup & Door Motor Driver (L298N) -->
+            <div class="hw-module motor-module">
+              <div class="module-title">
+                <span>⚙️ 3. Physical Motors Telemetry (4 Motors Synchronized)</span>
+                <span class="motor-state-badge" id="motorStateBadge">STANDBY</span>
+              </div>
+              <div class="motor-vis-container">
+                <div class="gear-spinner" id="gearSpinner">⚙️</div>
+                <div class="motor-telemetry">
+                  <div class="motor-stat">
+                    <span class="stat-lbl">Active Motor:</span>
+                    <span class="stat-val" id="motorPwmVal">M1: HOIST (STANDBY)</span>
+                  </div>
+                  <div class="motor-stat">
+                    <span class="stat-lbl">Motor Direction:</span>
+                    <span class="stat-val" id="motorDirVal">STOPPED</span>
+                  </div>
+                  <div class="motor-stat">
+                    <span class="stat-lbl">Physical Doors:</span>
+                    <span class="stat-val" id="motorApertureVal">CLOSED (0%)</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 4-Motor Architecture Status Bar -->
+              <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; font-size: 11px; font-family: var(--font-mono);">
+                <div id="m1Card" style="background: rgba(255, 255, 255, 0.04); border: 1px solid var(--border-subtle); border-radius: 6px; padding: 6px; text-align: center; transition: all 0.2s ease;">
+                  <strong style="color: #f59e0b; display: block;">M1: HOIST</strong>
+                  <span style="color: #94a3b8;">L298N#1 OUT3/4</span>
+                  <div id="m1Status" style="font-size: 10px; color: #94a3b8;">READY (Pins 4, 5)</div>
+                </div>
+                <div id="m2Card" style="background: rgba(255, 255, 255, 0.04); border: 1px solid var(--border-subtle); border-radius: 6px; padding: 6px; text-align: center; transition: all 0.2s ease;">
+                  <strong style="color: #34d399; display: block;">M2: FL 3 DOOR</strong>
+                  <span style="color: #94a3b8;">L298N#2 OUT3/4</span>
+                  <div id="m2Status" style="font-size: 10px; color: #94a3b8;">READY (Pins 10, 11)</div>
+                </div>
+                <div id="m3Card" style="background: rgba(255, 255, 255, 0.04); border: 1px solid var(--border-subtle); border-radius: 6px; padding: 6px; text-align: center; transition: all 0.2s ease;">
+                  <strong style="color: #a855f7; display: block;">M3: FL 5 DOOR</strong>
+                  <span style="color: #94a3b8;">L298N#1 OUT1/2</span>
+                  <div id="m3Status" style="font-size: 10px; color: #94a3b8;">READY (Pins 2, 3)</div>
+                </div>
+                <div id="m4Card" style="background: rgba(255, 255, 255, 0.04); border: 1px solid var(--border-subtle); border-radius: 6px; padding: 6px; text-align: center; transition: all 0.2s ease;">
+                  <strong style="color: #38bdf8; display: block;">M4: FL 1 DOOR</strong>
+                  <span style="color: #94a3b8;">L298N#2 OUT1/2</span>
+                  <div id="m4Status" style="font-size: 10px; color: #94a3b8;">READY (Pins 8, 9)</div>
+                </div>
+              </div>
+
+              <!-- Hardware LEDs Status Bar -->
+              <div class="hardware-leds-bar" style="margin-top: 10px;">
+                <div class="hw-led-item">
+                  <div class="hw-led led-amber" id="hwLedDoorActive"></div>
+                  <span>Pin 7 (Operation LED)</span>
+                </div>
+                <div class="hw-led-item">
+                  <div class="hw-led led-blue" id="hwLedDownActive"></div>
+                  <span>Pin 12 (DOWN Button)</span>
+                </div>
+                <div class="hw-led-item">
+                  <div class="hw-led led-amber" id="hwLedUpActive"></div>
+                  <span>Pin 13 (UP Button)</span>
+                </div>
+                <div class="hw-led-item">
+                  <div class="hw-led led-green" id="hwLedAuth"></div>
+                  <span>Hardware Synced</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Manual Interactive Test Deck -->
+        <div class="controls-card glass-card">
+          <div class="section-header">
+            <h2>Manual Testing Deck</h2>
+            <span class="badge-sub">Phase 5/6 API Triggers</span>
+          </div>
+
+          <!-- Primary Quick Buttons -->
+          <div class="primary-actions">
+            <button class="btn btn-primary" id="btnRequestFloor5">
+              <span class="btn-icon">🚀</span>
+              <div class="btn-content">
+                <strong>Request Floor 5 (Top Floor)</strong>
+                <small>POST /lift/request (Floor 5, UUID)</small>
+              </div>
+            </button>
+
+            <button class="btn btn-warning pulse-when-ready" id="btnDoorComplete" disabled>
+              <span class="btn-icon">🚪</span>
+              <div class="btn-content">
+                <strong>Simulate Door Complete</strong>
+                <small>POST /door/complete (Active UUID)</small>
+              </div>
+            </button>
+          </div>
+
+          <!-- Custom Floor Request Matrix (Floors 1-5) -->
+          <div class="floor-matrix-section">
+            <div class="matrix-title">Or Dispatch to Specific Floor:</div>
+            <div class="floor-btn-grid" id="floorBtnGrid">
+              <!-- Generated 1 through 5 in JS -->
+            </div>
+          </div>
+
+          <!-- Auto-Door Complete Toggle & Advanced Options -->
+          <div class="automation-helpers">
+            <label class="toggle-control">
+              <input type="checkbox" id="autoDoorCompleteToggle">
+              <span class="toggle-track"></span>
+              <span class="toggle-text">Auto-send DOOR_COMPLETE after real-life motor cycle</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Diagnostic Event Stream Terminal -->
+        <div class="terminal-card glass-card">
+          <div class="section-header">
+            <div class="header-left">
+              <h2>Diagnostic Event Feed</h2>
+              <span class="log-count-pill" id="logCountBadge">0 events</span>
+            </div>
+            <button class="btn-clear-logs" id="btnClearLogs" title="Clear Event Logs">Clear</button>
+          </div>
+
+          <div class="terminal-viewport" id="eventFeedTerminal">
+            <!-- Real-time logs appended here dynamically -->
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <div>Virtual Lift Simulation Engine & Hardware Sync • 5-Floor Real-life Prototype</div>
+      <div>Arduino UNO (COM3) • 2 Buttons • 2 LEDs • 4 Motors (Dual L298N) • TensorFlow.js Vision</div>
+    </footer>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

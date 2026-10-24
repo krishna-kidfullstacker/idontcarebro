@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Mobile AI Passenger Detector | IoT Lift</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <!-- TensorFlow.js & COCO-SSD Object Detection Model -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+  <style>
+    :root {
+      --bg-dark: #090d16;
+      --card-bg: rgba(18, 26, 43, 0.75);
+      --card-border: rgba(255, 255, 255, 0.1);
+      --accent-blue: #3b82f6;
+      --accent-green: #10b981;
+      --accent-amber: #f59e0b;
+      --accent-red: #ef4444;
+      --text-main: #f3f4f6;
+      --text-muted: #9ca3af;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      background: var(--bg-dark);
+      color: var(--text-main);
+      font-family: 'Outfit', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+
+    /* Header */
+    .mobile-header {
+      background: rgba(13, 19, 33, 0.95);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--card-border);
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+
+    .brand-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .brand-icon {
+      width: 34px;
+      height: 34px;
+      background: linear-gradient(135deg, #2563eb, #7c3aed);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+    }
+
+    .brand-title {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -0.2px;
+    }
+
+    .brand-sub {
+      font-size: 11px;
+      color: var(--text-muted);
+      display: block;
+    }
+
+    .header-pills {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .pill-status {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 20px;
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--accent-green);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .pill-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.8); }
+    }
+
+    /* Main Container */
+    .mobile-content {
+      flex: 1;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      max-width: 500px;
+      width: 100%;
+      margin: 0 auto;
+    }
+
+    /* Camera Viewport Box */
+    .camera-card {
+      background: #000;
+      border-radius: 16px;
+      border: 1px solid var(--card-border);
+      position: relative;
+      overflow: hidden;
+      aspect-ratio: 4 / 3;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #webcam {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(1);
+    }
+
+    #overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+
+    /* Camera HUD Elements */
+    .cam-hud-top {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      right: 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      pointer-events: none;
+    }
+
+    .hud-badge {
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(8px);
+      padding: 4px 10px;
+      border-radius: 8px;
+      font-size: 11px;
+      font-family: 'JetBrains Mono', monospace;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #fff;
+    }
+
+    .cam-controls {
+      position: absolute;
+      bottom: 10px;
+      right: 10px;
+      display: flex;
+      gap: 8px;
+      z-index: 20;
+    }
+
+    .icon-btn {
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: #fff;
+      border-radius: 50%;
+      width: 38px;
+      height: 38px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 16px;
+      transition: all 0.2s ease;
+    }
+
+    .icon-btn:active {
+      transform: scale(0.92);
+      background: var(--accent-blue);
+    }
+
+    /* Detection Feedback Overlay */
+    .verification-glow {
+      position: absolute;
+      inset: 0;
+      border: 3px solid transparent;
+      border-radius: 16px;
+      pointer-events: none;
+      transition: border-color 0.2s ease;
+    }
+
+    .verification-glow.active {
+      border-color: var(--accent-green);
+      box-shadow: inset 0 0 30px rgba(16, 185, 129, 0.3);
+    }
+
+    .verification-glow.success {
+      border-color: #34d399;
+      background: rgba(16, 185, 129, 0.2);
+      animation: flashSuccess 0.6s ease;
+    }
+
+    @keyframes flashSuccess {
+      0% { opacity: 0.8; }
+      100% { opacity: 0; }
+    }
+
+    /* Verification Hold Gauge */
+    .gauge-card {
+      background: var(--card-bg);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .gauge-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .gauge-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .gauge-timer {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--accent-green);
+    }
+
+    .gauge-track {
+      height: 12px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 6px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .gauge-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #3b82f6, #10b981);
+      border-radius: 6px;
+      transition: width 0.1s linear;
+    }
+
+    .gauge-subtext {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    /* Target Selector & Settings */
+    .controls-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .setting-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 10px 12px;
+    }
+
+    .setting-label {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+      display: block;
+      font-weight: 500;
+    }
+
+    .select-input {
+      width: 100%;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid var(--card-border);
+      color: #fff;
+      padding: 6px 8px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-family: inherit;
+      outline: none;
+    }
+
+    /* Direction / Switch Status Card */
+    .switch-status-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 12px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .switch-dest-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .dest-title {
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .dest-subtitle {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .dest-btn-group {
+      display: flex;
+      gap: 6px;
+    }
+
+    .dest-pill-btn {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--card-border);
+      color: #fff;
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .dest-pill-btn.active-down {
+      background: rgba(59, 130, 246, 0.25);
+      border-color: var(--accent-blue);
+      color: #60a5fa;
+    }
+
+    .dest-pill-btn.active-up {
+      background: rgba(245, 158, 11, 0.25);
+      border-color: var(--accent-amber);
+      color: #fbbf24;
+    }
+
+    /* Action Buttons */
+    .actions-card {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 4px;
+    }
+
+    .btn-verify-now {
+      background: linear-gradient(135deg, #059669, #10b981);
+      color: #fff;
+      border: none;
+      border-radius: 12px;
+      padding: 12px;
+      font-size: 14px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      cursor: pointer;
+      box-shadow: 0 4px 14px rgba(16, 185, 129, 0.3);
+      transition: transform 0.1s ease;
+    }
+
+    .btn-verify-now:active {
+      transform: scale(0.98);
+    }
+
+    .btn-cancel-now {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      color: #f87171;
+      border-radius: 12px;
+      padding: 9px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .footer-links {
+      text-align: center;
+      padding: 12px 0 20px;
+    }
+
+    .footer-links a {
+      color: var(--accent-blue);
+      text-decoration: none;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    /* Toast Notification */
+    .mobile-toast {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: rgba(16, 185, 129, 0.95);
+      backdrop-filter: blur(10px);
+      color: #fff;
+      padding: 10px 18px;
+      border-radius: 24px;
+      font-size: 13px;
+      font-weight: 600;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+      transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+    }
+
+    .mobile-toast.show {
+      transform: translateX(-50%) translateY(0);
+    }
+
+    .mobile-toast.error {
+      background: rgba(239, 68, 68, 0.95);
+    }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <header class="mobile-header">
+    <div class="brand-group">
+      <div class="brand-icon">🛗</div>
+      <div>
+        <div class="brand-title">Mobile AI Camera</div>
+        <span class="brand-sub">Floor 3 Station Detector</span>
+      </div>
+    </div>
+    <div class="header-pills">
+      <div class="pill-status" id="modelStatusPill">
+        <span class="pill-dot"></span>
+        <span id="modelStatusText">Loading AI...</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main class="mobile-content">
+    <!-- Camera Permission / HTTP Notice (Shown if browser restricts getUserMedia on local Wi-Fi IP) -->
+    <div id="insecureNoticeBanner" style="display: none; background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.35); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; font-size: 12px; line-height: 1.5; color: #fef3c7;">
+      <div style="font-weight: 700; color: #f59e0b; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
+        <span>ℹ️</span> Mobile Camera Over Wi-Fi
+      </div>
+      <span>Mobile browsers restrict live continuous video on local HTTP IPs. You can:</span>
+      <ul style="margin: 6px 0 6px 18px; padding: 0;">
+        <li>Use the <strong>📷 Take Passenger Photo</strong> button below to snap with native camera!</li>
+        <li>Or in Chrome: open <code>chrome://flags/#unsafely-treat-insecure-origin-as-secure</code>, add this URL, enable, and relaunch.</li>
+      </ul>
+    </div>
+
+    <!-- Camera Viewport -->
+    <div class="camera-card">
+      <video id="webcam" playsinline autoplay muted></video>
+      <canvas id="overlay"></canvas>
+      <div class="verification-glow" id="verificationGlow"></div>
+
+      <!-- HUD Top Info -->
+      <div class="cam-hud-top">
+        <div class="hud-badge" id="hudConfidence">Scanning...</div>
+        <div class="hud-badge" id="hudFps">0 FPS</div>
+      </div>
+
+      <!-- Camera Switch Toggle -->
+      <div class="cam-controls">
+        <button class="icon-btn" id="btnFlipCam" title="Flip Camera">🔄</button>
+      </div>
+    </div>
+
+    <!-- Native Camera Snapshot Fallback -->
+    <input type="file" id="snapshotInput" accept="image/*" capture="environment" style="display: none;">
+    <button type="button" class="btn-snapshot" id="btnSnapshot" style="background: linear-gradient(135deg, #1d4ed8, #2563eb); color: #fff; border: 1px solid rgba(255,255,255,0.2); border-radius: 14px; padding: 12px 16px; font-size: 14px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; margin: 10px 0; box-shadow: 0 4px 12px rgba(37,99,235,0.25);">
+      <span>📷</span> Take Passenger Photo (Instant Scan)
+    </button>
+
+    <!-- Hold Progress Gauge -->
+    <div class="gauge-card">
+      <div class="gauge-header">
+        <span class="gauge-title">Instant Presence Detection</span>
+        <span class="gauge-timer" id="gaugeTimerText">Standby</span>
+      </div>
+      <div class="gauge-track">
+        <div class="gauge-fill" id="gaugeFill"></div>
+      </div>
+      <div class="gauge-subtext">
+        <span id="detectionStatusLabel">Point phone at person in front of lift</span>
+        <span id="gaugePct">0%</span>
+      </div>
+    </div>
+
+    <!-- Lift Call Switch Buttons -->
+    <div class="switch-status-card" style="flex-direction: column; align-items: stretch; gap: 10px;">
+      <div class="switch-dest-info" style="display: flex; justify-content: space-between; align-items: center;">
+        <div>
+          <span class="dest-title" id="activeDestTitle">⬇️ Floor 3 ➔ Ground (Floor 1)</span>
+          <span class="dest-subtitle" id="activeDestSubtitle">Press button below or Arduino Uno Switch (Pin 2/3)</span>
+        </div>
+      </div>
+      <div class="dest-btn-group" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+        <button class="dest-pill-btn active-down" id="btnSelectDown" data-dest="1" style="padding: 12px; font-size: 13px; text-align: center;">
+          <strong>⬇️ Call: Ground (FL 1)</strong>
+          <small style="display:block; font-size:10px; opacity:0.8;">Uno Pin 2 (Blue LED)</small>
+        </button>
+        <button class="dest-pill-btn" id="btnSelectUp" data-dest="5" style="padding: 12px; font-size: 13px; text-align: center;">
+          <strong>⬆️ Call: 5th Floor</strong>
+          <small style="display:block; font-size:10px; opacity:0.8;">Uno Pin 3 (Amber LED)</small>
+        </button>
+      </div>
+    </div>
+
+    <!-- Settings Grid -->
+    <div class="controls-grid">
+      <div class="setting-card">
+        <label class="setting-label">AI Target Object</label>
+        <select class="select-input" id="targetSelect">
+          <option value="person" selected>👤 Human (Passenger)</option>
+          <option value="cell phone">📱 Mobile Phone</option>
+          <option value="bottle">🥤 Bottle / Object</option>
+          <option value="backpack">🎒 Backpack / Bag</option>
+        </select>
+      </div>
+
+      <div class="setting-card">
+        <label class="setting-label">Min Confidence</label>
+        <select class="select-input" id="confidenceSelect">
+          <option value="0.45">45% (Sensitive)</option>
+          <option value="0.55" selected>55% (Default)</option>
+          <option value="0.65">65% (Strict)</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="actions-card">
+      <button class="btn-verify-now" id="btnManualTrigger">
+        <span>⚡</span> Instant Verify & Dispatch Lift
+      </button>
+      <button class="btn-cancel-now" id="btnCancelScan">
+        ❌ Cancel AI Request & Reset Station
+      </button>
+    </div>
+
+    <div class="footer-links">
+      <a href="/" target="_blank">🖥️ Open Desktop Lift Simulator Dashboard &rarr;</a>
+    </div>
+  </main>
+
+  <!-- Mobile Toast Notification -->
+  <div class="mobile-toast" id="mobileToast">
+    <span id="toastIcon">✅</span>
+    <span id="toastMessage">Human Verified! Dispatching Lift to Floor 3...</span>
+  </div>
+
+  <script src="/static/mobile.js"></script>
+</body>
+</html>
