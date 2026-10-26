@@ -885,7 +885,12 @@ function startPresenceHeartbeat() {
   if (presenceHeartbeatTimer) return;
   presenceHeartbeatTimer = setInterval(async () => {
     const isEnRouteOrArrived = (currentLiftState.state === 'REQUESTED' || currentLiftState.state === 'MOVING' || currentLiftState.state === 'ARRIVED');
-    if (isEnRouteOrArrived && !['DOOR_OPENING', 'DOOR_OPEN', 'DOOR_CLOSING', 'NORMAL'].includes(currentLiftState.state)) {
+    // FIX 2: Only send presence during the pickup leg — NOT during passenger trip or empty return.
+    const isPickupLeg = isEnRouteOrArrived
+      && !currentLiftState.returning_to_ground
+      && !currentLiftState.is_passenger_trip
+      && !['DOOR_OPENING', 'DOOR_OPEN', 'DOOR_CLOSING', 'NORMAL'].includes(currentLiftState.state);
+    if (isPickupLeg) {
       try {
         await fetch('/ai/presence', {
           method: 'POST',
@@ -907,6 +912,9 @@ function stopPresenceHeartbeat() {
 }
 
 async function verifyPassengerYes(customDest = null) {
+  // GUARD: Never verify during passenger trip or empty return — only during pickup leg
+  if (currentLiftState.returning_to_ground || currentLiftState.is_passenger_trip) return;
+
   let targetDest = null;
   if (typeof customDest === "number" && (customDest === 1 || customDest === 5)) {
     targetDest = customDest;
@@ -1168,18 +1176,17 @@ async function dashVisionLoop() {
       isDashDetecting = false;
     }
   } else if (!dashCocoModel && dashWebcam.videoWidth > 0) {
-    // If AI model is still loading or offline, camera video is live and active
-    personFound = true;
-    bestScore = 0.95;
-    const boxColor = isScanning ? "#10b981" : "#38bdf8";
-    ctx.strokeStyle = boxColor;
+    // FIX 1: AI model not loaded — do NOT fake person detection. Show standby overlay only.
+    personFound = false;
+    bestScore = 0;
+    ctx.strokeStyle = "#38bdf8";
     ctx.lineWidth = 2;
     ctx.strokeRect(30, 20, Math.max(100, dashOverlay.width - 60), Math.max(80, dashOverlay.height - 40));
-    ctx.fillStyle = boxColor;
-    ctx.fillRect(30, 0, 160, 20);
+    ctx.fillStyle = "#38bdf8";
+    ctx.fillRect(30, 0, 200, 20);
     ctx.fillStyle = "#ffffff";
     ctx.font = "bold 11px JetBrains Mono, monospace";
-    ctx.fillText(isScanning ? "Person Detected (Live)" : "Laptop Webcam Ready", 35, 14);
+    ctx.fillText("Webcam Ready • AI Model Loading...", 35, 14);
   }
 
   if (personFound) {
@@ -1202,7 +1209,12 @@ async function dashVisionLoop() {
         verifyPassengerYes(targetDest);
       }
     } else if (currentLiftState.human_verified) {
-      startPresenceHeartbeat();
+      // GUARD: Only keep presence alive during pickup leg, not during delivery or return
+      if (!currentLiftState.returning_to_ground && !currentLiftState.is_passenger_trip) {
+        startPresenceHeartbeat();
+      } else {
+        stopPresenceHeartbeat();
+      }
       if (dashCamHud) {
         dashCamHud.textContent = `Passenger Verified • Tracking Live (${(bestScore * 100).toFixed(0)}%)`;
         dashCamHud.style.color = "#34d399";
@@ -1236,7 +1248,8 @@ async function dashVisionLoop() {
         dashCamHud.textContent = "Button Pressed! Watching for Person (Live)...";
         dashCamHud.style.color = "#f59e0b";
       }
-      dashVerifySent = false;
+      // FIX 3: Do NOT reset dashVerifySent on absent frames mid-trip.
+      // It only resets in resetSwitchIndicators() when lift returns to NORMAL state.
       if (dashDetectionLabel) dashDetectionLabel.textContent = "Button Pressed! Watching live for person... Please stand in front of camera";
       if (dashGaugeFill) dashGaugeFill.style.width = "0%";
       if (dashGaugeTimer) dashGaugeTimer.textContent = "Watching...";

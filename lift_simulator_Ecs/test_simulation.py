@@ -496,52 +496,18 @@ class TestVirtualLiftSimulation(unittest.TestCase):
         asyncio.run(simulation._tick(settings.DOOR_TRANSITION_TIME + 0.1))
         self.assertEqual(simulation.state, LiftState.COMPLETE)
 
-        # 3. Delivery at 5 complete -> dispatches 5 to 3 for second leg!
-        asyncio.run(simulation._tick(settings.COMPLETE_PAUSE_TIME + 0.1))
-        self.assertEqual(simulation.state, LiftState.MOVING)
-        self.assertEqual(simulation.target_floor, 3)
-        self.assertTrue(simulation._awaiting_second_leg_verification)
-        self.assertFalse(simulation.human_verified) # Must verify again at 3!
-
-        asyncio.run(simulation._tick(5.5)) # Arrive at Floor 3 from 5
-        self.assertEqual(simulation.state, LiftState.ARRIVED)
-        self.assertEqual(simulation.current_floor, 3.0)
-
-        # User requirement: "while coming 5 to 3 then again it should verify"
-        self.client.post("/ai/verify-human", json={"verified": True})
-        self.assertTrue(simulation.human_verified)
-
-        # Doors open at 3 for second passenger
-        asyncio.run(simulation._tick(settings.ARRIVED_PAUSE_TIME + 0.1))
-        self.assertEqual(simulation.state, LiftState.DOOR_OPENING)
-        asyncio.run(simulation._tick(settings.DOOR_TRANSITION_TIME + 0.1))
-        self.assertEqual(simulation.state, LiftState.DOOR_OPEN)
-        asyncio.run(simulation._tick(settings.DOOR_DWELL_TIME + 0.1))
-        self.assertEqual(simulation.state, LiftState.DOOR_CLOSING)
-        asyncio.run(simulation._tick(settings.DOOR_TRANSITION_TIME + 0.1))
-        self.assertEqual(simulation.state, LiftState.COMPLETE)
-
-        # 4. Moving 3 -> 1 (distance = 25cm @ 5cm/s = 5.0s)
+        # 3. Delivery at 5 complete -> strictly bypasses Floor 3, returns directly to Floor 1
         asyncio.run(simulation._tick(settings.COMPLETE_PAUSE_TIME + 0.1))
         self.assertEqual(simulation.state, LiftState.MOVING)
         self.assertEqual(simulation.target_floor, 1)
+        self.assertTrue(simulation._returning_to_ground)
 
-        asyncio.run(simulation._tick(5.5)) # Arrive at Floor 1
+        asyncio.run(simulation._tick(11.0)) # Travel 5 -> 1 directly (51cm @ 5cm/s = ~10.2s)
         self.assertEqual(simulation.state, LiftState.ARRIVED)
         self.assertEqual(simulation.current_floor, 1.0)
 
-        # Floor 1 doors open, dwell, close
-        asyncio.run(simulation._tick(settings.ARRIVED_PAUSE_TIME + 0.1))
-        self.assertEqual(simulation.state, LiftState.DOOR_OPENING)
-        asyncio.run(simulation._tick(settings.DOOR_TRANSITION_TIME + 0.1))
-        self.assertEqual(simulation.state, LiftState.DOOR_OPEN)
-        asyncio.run(simulation._tick(settings.DOOR_DWELL_TIME + 0.1))
-        self.assertEqual(simulation.state, LiftState.DOOR_CLOSING)
-        asyncio.run(simulation._tick(settings.DOOR_TRANSITION_TIME + 0.1))
-        self.assertEqual(simulation.state, LiftState.COMPLETE)
-
         # Final completion at Floor 1 -> IDLE NORMAL
-        asyncio.run(simulation._tick(settings.COMPLETE_PAUSE_TIME + 0.1))
+        asyncio.run(simulation._tick(0.1))
         self.assertEqual(simulation.state, LiftState.NORMAL)
         self.assertEqual(simulation.current_floor, 1.0)
 
@@ -552,11 +518,10 @@ class TestVirtualLiftSimulation(unittest.TestCase):
         asyncio.run(simulation._tick(settings.DOOR_TRANSITION_TIME + 0.1))
         asyncio.run(simulation._tick(settings.COMPLETE_PAUSE_TIME + 0.1))
 
-    # 15. Dual-button flow: coming 5 to 3 NOT verified -> goes to 1st directly
-    def test_dual_buttons_pressed_together_unverified_goes_to_1st_directly(self):
-        # Press both buttons
+    # 15. Return from Floor 5 strictly bypasses Floor 3
+    def test_return_from_floor_5_strictly_bypasses_floor_3(self):
+        # Press UP button
         self.client.post("/ai/trigger-switch", json={"destination_floor": 5})
-        self.client.post("/ai/trigger-switch", json={"destination_floor": 1})
 
         # Leg 1: 1 -> 3
         asyncio.run(simulation._tick(0.05))
@@ -570,26 +535,16 @@ class TestVirtualLiftSimulation(unittest.TestCase):
         asyncio.run(simulation._tick(5.5))
         self.assertEqual(simulation.current_floor, 5.0)
 
-        # Cycle doors at 5 -> dispatches 5 to 3
+        # Cycle doors at 5 -> delivery complete
         self._step_doors_cycle()
 
-        # Leg 3: 5 -> 3
-        asyncio.run(simulation._tick(5.5))
-        self.assertEqual(simulation.state, LiftState.ARRIVED)
-        self.assertEqual(simulation.current_floor, 3.0)
-        self.assertTrue(simulation._awaiting_second_leg_verification)
-        self.assertFalse(simulation.human_verified)
-
-        # User requirement: "while coming 5 to 3 then again it should verify otherwise it goes to 1st directly"
-        # DO NOT VERIFY. Wait for SECOND_LEG_GRACE_SECONDS
-        asyncio.run(simulation._tick(settings.SECOND_LEG_GRACE_SECONDS + 0.5))
-
-        # Must bypass doors and move directly to Floor 1!
+        # Must bypass Floor 3 and move directly to Floor 1!
         self.assertEqual(simulation.state, LiftState.MOVING)
         self.assertEqual(simulation.target_floor, 1)
+        self.assertTrue(simulation._returning_to_ground)
 
-        # Arrives at Floor 1 and completes to IDLE NORMAL
-        asyncio.run(simulation._tick(5.5))
+        # Arrives directly at Floor 1 and completes to IDLE NORMAL
+        asyncio.run(simulation._tick(11.0))
         self.assertEqual(simulation.state, LiftState.ARRIVED)
         self.assertEqual(simulation.current_floor, 1.0)
         asyncio.run(simulation._tick(0.1))

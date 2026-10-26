@@ -218,6 +218,7 @@ class LiftSimulation:
             "scan_active": self.scan_active,
             "scan_target": self.scan_target,
             "returning_to_ground": self._returning_to_ground,
+            "is_passenger_trip": self._is_passenger_trip,
             "current_elevation_cm": round(self.current_elevation_cm, 2),
             "queued_destinations": list(self.queued_destinations),
             "is_dual_leg": self._is_dual_leg_active,
@@ -667,8 +668,8 @@ class LiftSimulation:
             return
 
         # Station pickup at Floor 3 requires passenger verification before opening doors
-        # (Both on initial pickup leg and on return leg coming 5 -> 3)
-        if int(round(self.current_floor)) == 3 and not self._is_passenger_trip and not self.human_verified:
+        # (Only on initial pickup leg; never when returning to ground)
+        if int(round(self.current_floor)) == 3 and not self._is_passenger_trip and not self._returning_to_ground and not self.human_verified:
             # Wait in ARRIVED state for verification or grace timeout / bypass
             return
 
@@ -744,42 +745,21 @@ class LiftSimulation:
                     event_type="PASSENGER_DELIVERED"
                 )
 
-                # Check if this was delivery at Floor 5 AND we have a dual-button / queued Floor 1 request:
-                # User requirement: "first one should be the 3 to 5 again 5 to 3 and then 3 to 1"
-                has_queued_1 = (1 in self.queued_destinations) or (self._is_dual_leg_active and dest == 5)
-                if curr_f == 5 and has_queued_1:
-                    self._log_event(
-                        "Dual-leg active: Floor 5 delivery complete. Next leg: 5 to 3, awaiting passenger verification for Floor 1.",
-                        level="INFO",
-                        event_type="DUAL_LEG_TO_FLOOR_3"
-                    )
-                    # Prepare for 5 -> 3 leg
-                    self.queued_destinations = [d for d in self.queued_destinations if d != 1]
-                    self._is_passenger_trip = False
-                    self._returning_to_ground = False
-                    self._awaiting_second_leg_verification = True
-                    self.human_verified = False  # Must verify again at Floor 3!
-                    self.last_presence_time = None
-                    self._grace_timer = 0.0
-                    self._passenger_committed = False
-                    self.destination_floor = 1
-                    self._trip_destination = 1
-                    self.target_floor = 3
-                    self._set_state(LiftState.MOVING)
-                    return
-
-                # Otherwise single trip or final delivery:
+                # Passenger delivery complete: strictly bypass Floor 3 and return directly to Floor 1
                 await self.broadcast_status({"event": "PASSENGER_DELIVERED"})
 
                 if curr_f != 1:
-                    # Empty lift returns to Ground Floor (Floor 1)
+                    # Empty lift returns directly to Ground Floor (Floor 1) — strictly bypassing Floor 3 in all cases
                     self._is_passenger_trip = False
                     self._returning_to_ground = True
                     self.target_floor = 1
                     self.destination_floor = None
                     self._trip_destination = None
+                    self.queued_destinations.clear()
+                    self._is_dual_leg_active = False
+                    self._awaiting_second_leg_verification = False
                     self._log_event(
-                        f"Returning empty lift to Ground Floor (Floor 1) (request_id: {self.active_request_id})",
+                        f"Returning empty lift directly to Ground Floor (Floor 1), strictly bypassing Floor 3 (request_id: {self.active_request_id})",
                         level="INFO",
                         event_type="RETURNING_TO_GROUND",
                         extra={"request_id": self.active_request_id}
